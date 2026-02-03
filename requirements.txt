@@ -1,0 +1,35 @@
+# Navidrome OBS Overlay dependencies
+#
+# This project intentionally has *no pip-installable runtime dependencies*.
+# `pip install -r requirements.txt` will therefore not install anything.
+#
+# The sections below are an explicit manifest of what the app requires.
+#
+# Runtime
+# - Python: 3.10+
+#
+# Standard library modules used
+# - argparse
+# - dataclasses
+# - getpass
+# - http (HTTPStatus)
+# - http.server (BaseHTTPRequestHandler, ThreadingHTTPServer)
+# - importlib.util
+# - json
+# - os
+# - pathlib
+# - sys
+# - threading
+# - time
+# - typing
+# - urllib.parse
+# - urllib.request
+# - webbrowser
+#
+# GUI (optional)
+# - tkinter (standard library)
+#   Note: some Python distributions (especially on Linux) ship without Tk.
+#
+# System packages for Tkinter (Linux)
+# - Debian/Ubuntu: python3-tk
+# - Fedora/RHEL: python3-tkinter
