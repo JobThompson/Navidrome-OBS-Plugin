@@ -7,6 +7,7 @@ import time
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Dict
 from urllib import parse
 
@@ -17,6 +18,19 @@ from navidrome_api import (
 )
 from overlay_config import OverlayConfig
 from overlay_html import render_index
+
+
+def _guess_content_type(path: str) -> str:
+    lowered = path.lower()
+    if lowered.endswith(".png"):
+        return "image/png"
+    if lowered.endswith(".jpg") or lowered.endswith(".jpeg"):
+        return "image/jpeg"
+    if lowered.endswith(".gif"):
+        return "image/gif"
+    if lowered.endswith(".webp"):
+        return "image/webp"
+    return "application/octet-stream"
 
 
 def send_json(handler: BaseHTTPRequestHandler, payload: Dict) -> None:
@@ -57,16 +71,53 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
             self._handle_cover_art(cover_id)
             return
 
+        if parsed.path.startswith("/assets/"):
+            asset_path = parsed.path.split("/assets/", 1)[1]
+            self._handle_asset(asset_path)
+            return
+
         self.send_error(HTTPStatus.NOT_FOUND, "Endpoint not found")
 
     def _handle_index(self) -> None:
-        html_bytes = render_index(self.config.refresh_seconds, self.config.show_progress)
+        placeholder_url = ""
+        if self.config.nothing_playing_placeholder == "dark":
+            placeholder_url = "/assets/" + parse.quote("Nothing Playing Dark.png")
+        elif self.config.nothing_playing_placeholder == "light":
+            placeholder_url = "/assets/" + parse.quote("Nothing Playing Light.png")
+
+        html_bytes = render_index(
+            self.config.refresh_seconds,
+            self.config.show_progress,
+            theme_css_vars=self.config.theme.to_css_vars(),
+            nothing_playing_cover_url=placeholder_url or None,
+        )
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html_bytes)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(html_bytes)
+
+    def _handle_asset(self, asset_path: str) -> None:
+        # Prevent traversal; only allow files under ./assets.
+        assets_root = Path(__file__).with_name("assets")
+        requested = parse.unquote(asset_path).lstrip("/\\")
+        candidate = (assets_root / requested).resolve()
+        try:
+            assets_root_resolved = assets_root.resolve()
+        except FileNotFoundError:
+            assets_root_resolved = assets_root
+
+        if assets_root_resolved not in candidate.parents and candidate != assets_root_resolved:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid asset path")
+            return
+
+        if not candidate.exists() or not candidate.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND, "Asset not found")
+            return
+
+        data = candidate.read_bytes()
+        send_bytes(self, data, _guess_content_type(candidate.name))
 
     def _handle_now_playing(self) -> None:
         try:

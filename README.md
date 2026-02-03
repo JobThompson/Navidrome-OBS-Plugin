@@ -31,6 +31,16 @@ add it to OBS as a Browser source.
    OVERLAY_PORT=8080
    OVERLAY_REFRESH_SECONDS=1
    OVERLAY_SHOW_PROGRESS=false
+
+   # When nothing is playing: dark | light | off
+   OVERLAY_NOTHING_PLAYING_PLACEHOLDER=dark
+
+   # Optional overlay theme
+   OVERLAY_THEME_FONT_FAMILY="Segoe UI", sans-serif
+   OVERLAY_THEME_TEXT_COLOR=#f4f4f5
+   OVERLAY_THEME_CARD_BG=rgba(10, 10, 10, 0.75)
+   OVERLAY_THEME_ACCENT_START=#60a5fa
+   OVERLAY_THEME_ACCENT_END=#34d399
    ```
 
 2. Run the overlay server:
