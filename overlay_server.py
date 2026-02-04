@@ -14,7 +14,8 @@ from urllib import parse
 from navidrome_api import (
     build_now_playing_payload,
     fetch_cover_art,
-    fetch_now_playing,
+    fetch_now_playing_entries,
+    fetch_play_queue_current,
 )
 from overlay_config import OverlayConfig
 from overlay_html import render_index
@@ -38,7 +39,9 @@ def send_json(handler: BaseHTTPRequestHandler, payload: Dict) -> None:
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(encoded)))
-    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+    handler.send_header("Pragma", "no-cache")
+    handler.send_header("Expires", "0")
     handler.end_headers()
     handler.wfile.write(encoded)
 
@@ -47,9 +50,18 @@ def send_bytes(handler: BaseHTTPRequestHandler, data: bytes, content_type: str) 
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(data)))
-    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+    handler.send_header("Pragma", "no-cache")
+    handler.send_header("Expires", "0")
     handler.end_headers()
     handler.wfile.write(data)
+
+
+_now_playing_log_state: dict[str, str | None] = {"key": None}
+_last_now_playing_log_lock = threading.Lock()
+
+
+_EMPTY_SOURCEMAP_V3 = b'{"version":3,"sources":[],"names":[],"mappings":""}'
 
 
 class NavidromeOverlayHandler(BaseHTTPRequestHandler):
@@ -57,6 +69,17 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = parse.urlparse(self.path)
+
+        # Some browser devtools/extensions (e.g., React DevTools) attempt to fetch
+        # source maps for injected scripts. These requests are unrelated to the
+        # overlay but can produce confusing 404 console noise, especially in OBS.
+        decoded_path = parse.unquote(parsed.path)
+        if parsed.path == "/installHook.js.map":
+            send_bytes(self, _EMPTY_SOURCEMAP_V3, "application/json; charset=utf-8")
+            return
+        if decoded_path == "/<anonymous code>":
+            send_bytes(self, b"/* devtools placeholder */\n", "text/javascript; charset=utf-8")
+            return
 
         if parsed.path in {"/", "/index.html"}:
             self._handle_index()
@@ -94,7 +117,9 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html_bytes)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.end_headers()
         self.wfile.write(html_bytes)
 
@@ -121,8 +146,27 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
 
     def _handle_now_playing(self) -> None:
         try:
-            entry = fetch_now_playing(self.config)
-            payload = build_now_playing_payload(self.config, entry)
+            queue_entry, queue_position = fetch_play_queue_current(self.config)
+            now_entries = fetch_now_playing_entries(self.config)
+
+            entry = queue_entry or (now_entries[0] if now_entries else None)
+            elapsed_override = queue_position
+            is_paused = False
+            if queue_entry:
+                queue_id = str(queue_entry.get("id") or "")
+                is_paused = True
+                if queue_id:
+                    for e in now_entries:
+                        if str(e.get("id") or "") == queue_id:
+                            is_paused = False
+                            break
+
+            payload = build_now_playing_payload(
+                self.config,
+                entry,
+                is_paused=is_paused,
+                elapsed_seconds_override=elapsed_override,
+            )
         except Exception as exc:  # pylint: disable=broad-except
             print(f"Failed to fetch now playing: {exc}")
             payload = {
@@ -130,6 +174,23 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
                 "serverTime": time.time(),
                 "error": f"Unable to reach Navidrome ({type(exc).__name__})",
             }
+
+        # Debug: log state changes (avoids spamming once per refresh tick).
+        try:
+            is_playing = bool(payload.get("isPlaying"))
+            is_paused = bool(payload.get("isPaused"))
+            title = str(payload.get("title") or "")
+            artist = str(payload.get("artist") or "")
+            log_key = f"{int(is_playing)}|{int(is_paused)}|{title}|{artist}"
+            with _last_now_playing_log_lock:
+                if log_key != _now_playing_log_state["key"]:
+                    _now_playing_log_state["key"] = log_key
+                    if is_playing:
+                        print(f"Now playing: {title} - {artist}".rstrip(" -"))
+                    else:
+                        print("Now playing: (nothing)")
+        except (TypeError, ValueError, AttributeError):
+            pass
 
         send_json(self, payload)
 

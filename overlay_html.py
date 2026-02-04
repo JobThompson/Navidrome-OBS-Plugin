@@ -50,10 +50,21 @@ def render_index(
       }
       const now = Date.now() / 1000;
       const duration = currentPayload.durationSeconds || 0;
-      const elapsed = Math.min(
-        duration,
-        (currentPayload.elapsedSeconds || 0) + (now - currentPayload.serverTime)
-      );
+      const baseElapsed = currentPayload.elapsedSeconds || 0;
+      let elapsed = baseElapsed;
+      if (!currentPayload.isPaused) {
+        // If the overlay/tab was throttled/suspended (OBS, background, system sleep),
+        // the payload can become very stale. Avoid jumping the progress to 100% and
+        // trigger a refresh to recover quickly.
+        const driftSeconds = now - (currentPayload.serverTime || 0);
+        const maxDriftSeconds = Math.max(2, (refreshMs / 1000) * 2);
+        if (driftSeconds > maxDriftSeconds) {
+          // Fire-and-forget; refreshNowPlaying is defined below.
+          refreshNowPlaying();
+        }
+        const safeDriftSeconds = Math.min(Math.max(driftSeconds, 0), maxDriftSeconds);
+        elapsed = Math.min(duration, baseElapsed + safeDriftSeconds);
+      }
       const percent = duration > 0 ? (elapsed / duration) * 100 : 0;
       progressEl.style.width = `${percent}%`;
       timeEl.textContent = duration ? `${formatTime(elapsed)} / ${formatTime(duration)}` : "";
@@ -228,20 +239,85 @@ def render_index(
       }}{progress_update_call}
     }}
 
+    let refreshInFlight = false;
+    let refreshStartedAtMs = 0;
+    let lastAppliedServerTime = 0;
+
     async function refreshNowPlaying() {{
+      const nowMs = Date.now();
+      // If a previous request got stuck (rare, but can happen in embedded browsers),
+      // don't let it block polling forever.
+      const fetchTimeoutMs = Math.max(refreshMs * 3, 15000);
+      if (refreshInFlight) {{
+        if (refreshStartedAtMs && (nowMs - refreshStartedAtMs) > (fetchTimeoutMs + 2000)) {{
+          refreshInFlight = false;
+        }} else {{
+          return;
+        }}
+      }}
+
+      refreshInFlight = true;
+      refreshStartedAtMs = nowMs;
       try {{
-        const response = await fetch("/api/now-playing", {{ cache: "no-store" }});
+        // Add a cache-busting query param because some embedded browsers/proxies
+        // may still serve cached responses even with Cache-Control: no-store.
+        const url = "/api/now-playing?_=" + Date.now();
+        let response;
+        if (typeof AbortController !== "undefined") {{
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), fetchTimeoutMs);
+          try {{
+            response = await fetch(url, {{ cache: "no-store", signal: controller.signal }});
+          }} finally {{
+            clearTimeout(timeoutId);
+          }}
+        }} else {{
+          response = await fetch(url, {{ cache: "no-store" }});
+        }}
+        if (!response.ok) {{
+          throw new Error("HTTP " + response.status);
+        }}
         const payload = await response.json();
-        applyPayload(payload);
+        // Debug: prove what the client is receiving.
+        try {{
+          const title = payload && payload.title ? String(payload.title) : "";
+          const artist = payload && payload.artist ? String(payload.artist) : "";
+          const state = payload && payload.isPlaying ? (payload.isPaused ? "PAUSED" : "PLAYING") : "NOT_PLAYING";
+          console.log("[now-playing]", state, title, artist, "serverTime=" + (payload && payload.serverTime ? payload.serverTime : ""));
+        }} catch (_) {{
+          // Ignore logging errors.
+        }}
+        // Avoid applying older responses out of order (can happen after long throttles).
+        const st = payload && payload.serverTime ? Number(payload.serverTime) : 0;
+        if (st >= lastAppliedServerTime) {{
+          lastAppliedServerTime = st;
+          applyPayload(payload);
+        }}
       }} catch (error) {{
+        try {{
+          console.warn("[now-playing] refresh failed", error);
+        }} catch (_) {{
+          // Ignore logging errors.
+        }}
         titleEl.textContent = "Unable to reach Navidrome";
         artistEl.textContent = "";
         applyNothingPlayingCover();{progress_reset}
+      }} finally {{
+        refreshInFlight = false;
+        refreshStartedAtMs = 0;
       }}
     }}
 
     refreshNowPlaying();
-    setInterval(refreshNowPlaying, refreshMs);{progress_interval}
+    setInterval(refreshNowPlaying, refreshMs);
+    // Force a refresh when the source becomes visible/active again.
+    document.addEventListener("visibilitychange", () => {{
+      if (!document.hidden) {{
+        refreshNowPlaying();
+      }}
+    }});
+    window.addEventListener("focus", () => refreshNowPlaying());
+    window.addEventListener("pageshow", () => refreshNowPlaying());{progress_interval}
   </script>
 </body>
 </html>

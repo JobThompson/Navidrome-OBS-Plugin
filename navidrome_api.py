@@ -103,24 +103,92 @@ def detect_subsonic_api_version(
 
 
 def fetch_now_playing(config: OverlayConfig) -> Optional[Dict[str, Any]]:
+    entries = fetch_now_playing_entries(config)
+    return entries[0] if entries else None
+
+
+def fetch_now_playing_entries(config: OverlayConfig) -> list[Dict[str, Any]]:
+    """Fetch all now-playing entries.
+
+    getNowPlaying can return multiple entries (across devices/users). The overlay
+    historically used the first entry, but some logic benefits from seeing the
+    whole list.
+    """
+
     url = build_subsonic_url(config, "getNowPlaying", {})
     response = fetch_json(url, config.request_timeout)
     subsonic_response = response.get("subsonic-response", {})
     if subsonic_response.get("status") != "ok":
-        return None
+        return []
 
     now_playing = subsonic_response.get("nowPlaying", {})
     entries = now_playing.get("entry")
     if not entries:
-        return None
+        return []
 
     if isinstance(entries, list):
-        return entries[0]
-    return entries
+        return [e for e in entries if isinstance(e, dict)]
+    if isinstance(entries, dict):
+        return [entries]
+    return []
+
+
+def fetch_play_queue_current(
+    config: OverlayConfig,
+) -> tuple[Optional[Dict[str, Any]], Optional[int]]:
+    """Fetch the current track from the Subsonic play queue.
+
+    This is useful when playback is paused: some clients/servers may not report
+    anything in getNowPlaying while paused, but the play queue still knows the
+    current track.
+
+    Returns (entry, positionSeconds) where positionSeconds may be None.
+    """
+
+    url = build_subsonic_url(config, "getPlayQueue", {})
+    response = fetch_json(url, config.request_timeout)
+    subsonic_response = response.get("subsonic-response", {})
+    if subsonic_response.get("status") != "ok":
+        return (None, None)
+
+    play_queue = subsonic_response.get("playQueue") or {}
+    current_id = str(play_queue.get("current") or "")
+    position_raw = play_queue.get("position")
+    position_seconds: Optional[int]
+    try:
+        position_seconds = int(position_raw) if position_raw is not None else None
+    except (TypeError, ValueError):
+        position_seconds = None
+
+    entries = play_queue.get("entry")
+    if not entries:
+        return (None, position_seconds)
+
+    entry_list: list[Dict[str, Any]]
+    if isinstance(entries, list):
+        entry_list = [e for e in entries if isinstance(e, dict)]
+    elif isinstance(entries, dict):
+        entry_list = [entries]
+    else:
+        entry_list = []
+
+    if not entry_list:
+        return (None, position_seconds)
+
+    if current_id:
+        for entry in entry_list:
+            if str(entry.get("id") or "") == current_id:
+                return (entry, position_seconds)
+
+    return (entry_list[0], position_seconds)
 
 
 def build_now_playing_payload(
-    _config: OverlayConfig, entry: Optional[Dict[str, Any]]
+    _config: OverlayConfig,
+    entry: Optional[Dict[str, Any]],
+    *,
+    is_paused: bool = False,
+    elapsed_seconds_override: Optional[int] = None,
 ) -> Dict[str, Any]:
     server_time = time.time()
     if not entry:
@@ -130,15 +198,20 @@ def build_now_playing_payload(
         }
 
     duration = int(entry.get("duration") or 0)
-    elapsed_minutes = float(entry.get("minutesAgo") or 0)
-    raw_elapsed_seconds = max(0, int(elapsed_minutes * 60))
-    elapsed_seconds = min(raw_elapsed_seconds, duration) if duration else raw_elapsed_seconds
+    if elapsed_seconds_override is not None:
+        raw_elapsed_seconds = max(0, int(elapsed_seconds_override))
+        elapsed_seconds = min(raw_elapsed_seconds, duration) if duration else raw_elapsed_seconds
+    else:
+        elapsed_minutes = float(entry.get("minutesAgo") or 0)
+        raw_elapsed_seconds = max(0, int(elapsed_minutes * 60))
+        elapsed_seconds = min(raw_elapsed_seconds, duration) if duration else raw_elapsed_seconds
 
     cover_id = entry.get("coverArt") or entry.get("id") or ""
     cover_url = f"/api/cover/{parse.quote(str(cover_id))}" if cover_id else ""
 
     return {
         "isPlaying": True,
+        "isPaused": bool(is_paused),
         "title": entry.get("title") or "Unknown Title",
         "artist": entry.get("artist") or "Unknown Artist",
         "album": entry.get("album") or "",
