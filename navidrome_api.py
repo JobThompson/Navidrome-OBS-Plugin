@@ -126,11 +126,39 @@ def fetch_now_playing_entries(config: OverlayConfig) -> list[Dict[str, Any]]:
     if not entries:
         return []
 
+    entry_list: list[Dict[str, Any]]
     if isinstance(entries, list):
-        return [e for e in entries if isinstance(e, dict)]
-    if isinstance(entries, dict):
-        return [entries]
-    return []
+        entry_list = [e for e in entries if isinstance(e, dict)]
+    elif isinstance(entries, dict):
+        entry_list = [entries]
+    else:
+        entry_list = []
+
+    if not entry_list:
+        return []
+
+    def extract_username(entry: Dict[str, Any]) -> Optional[str]:
+        for key in ("username", "user", "userName", "user_name", "userId"):
+            value = entry.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return None
+
+    target_user = (config.navidrome_user or "").strip()
+    if not target_user:
+        return entry_list
+
+    usernames = [extract_username(e) for e in entry_list]
+    has_any_username = any(u is not None for u in usernames)
+    if has_any_username:
+        target_lower = target_user.casefold()
+        filtered = [e for e, u in zip(entry_list, usernames) if u and u.casefold() == target_lower]
+        return filtered
+
+    return entry_list
 
 
 def fetch_play_queue_current(
