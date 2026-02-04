@@ -199,6 +199,17 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Cover art ID missing")
             return
 
+        # Cover art is safe to cache aggressively because the URL contains the cover ID.
+        # This reduces repeated image fetches when the overlay polls now-playing.
+        etag = f'"cover-{cover_id}"'
+        if_none_match = self.headers.get("If-None-Match")
+        if if_none_match and etag in if_none_match:
+            self.send_response(HTTPStatus.NOT_MODIFIED)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "public, max-age=86400, immutable")
+            self.end_headers()
+            return
+
         try:
             cover_bytes = fetch_cover_art(self.config, cover_id)
         except Exception as exc:  # pylint: disable=broad-except
@@ -213,7 +224,13 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, "Cover art unavailable")
             return
 
-        send_bytes(self, cover_bytes, "image/jpeg")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(cover_bytes)))
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "public, max-age=86400, immutable")
+        self.end_headers()
+        self.wfile.write(cover_bytes)
 
 
 def build_handler(config: OverlayConfig) -> type[NavidromeOverlayHandler]:

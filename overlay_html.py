@@ -209,14 +209,25 @@ def render_index(
     const coverEl = document.getElementById("cover");{progress_js_vars}
     let currentPayload = null;{progress_js_functions}
 
-    function applyNothingPlayingCover() {{
-      if (nothingPlayingCoverUrl) {{
-        coverEl.src = nothingPlayingCoverUrl;
+    let lastCoverUrl = null;
+
+    function applyCoverUrl(url) {{
+      const next = url || "";
+      if (lastCoverUrl === next) {{
+        return;
+      }}
+      lastCoverUrl = next;
+      if (next) {{
+        coverEl.src = next;
         coverEl.classList.remove("default");
       }} else {{
         coverEl.removeAttribute("src");
         coverEl.classList.add("default");
       }}
+    }}
+
+    function applyNothingPlayingCover() {{
+      applyCoverUrl(nothingPlayingCoverUrl);
     }}
 
     function applyPayload(payload) {{
@@ -230,13 +241,7 @@ def render_index(
 
       titleEl.textContent = payload.title;
       artistEl.textContent = payload.artist || "";
-      if (payload.coverUrl) {{
-        coverEl.src = payload.coverUrl;
-        coverEl.classList.remove("default");
-      }} else {{
-        coverEl.removeAttribute("src");
-        coverEl.classList.add("default");
-      }}{progress_update_call}
+      applyCoverUrl(payload.coverUrl || "");{progress_update_call}
     }}
 
     let refreshInFlight = false;
