@@ -38,7 +38,7 @@ add it to OBS as a Browser source.
    # Optional overlay theme
    OVERLAY_THEME_FONT_FAMILY="Segoe UI", sans-serif
    OVERLAY_THEME_TEXT_COLOR=#f4f4f5
-   OVERLAY_THEME_CARD_BG=rgba(10, 10, 10, 0.75)
+   OVERLAY_THEME_CARD_BG=#000000
    OVERLAY_THEME_ACCENT_START=#60a5fa
    OVERLAY_THEME_ACCENT_END=#34d399
    ```
@@ -104,3 +104,7 @@ End users should still run `python navidrome_obs_overlay.py ...` or the included
 - Album cover art
 - Song title and artist
 - Playback progress bar and timer
+
+## Known Issues:
+
+- When a song is paused, and the user skips the song, the API will not update until the next song finishes. This is an issue with the Navidrome API, and I've not found a way to fix it yet.
