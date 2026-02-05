@@ -1,10 +1,29 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
 from typing import Dict, Optional
+
+
+def app_dir() -> Path:
+    """Return the directory containing user-facing runtime files.
+
+    In source form, this is the directory containing this module.
+    In a frozen executable (e.g. PyInstaller), this is the directory
+    containing the executable.
+    """
+
+    if getattr(sys, "frozen", False):
+        # sys.executable points at the .exe
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def default_env_path() -> Path:
+    return app_dir() / ".env"
 
 
 def _as_int(value: Optional[str], default: int) -> int:
@@ -57,10 +76,6 @@ class OverlayTheme:
 
     title_size_px: int = 18
     artist_size_px: int = 14
-    time_size_px: int = 12
-
-    progress_track_bg: str = "rgba(255, 255, 255, 0.2)"
-    progress_height_px: int = 6
     accent_start: str = "#60a5fa"
     accent_end: str = "#34d399"
 
@@ -81,9 +96,6 @@ class OverlayTheme:
             "--overlay-cover-radius": f"{self.cover_radius_px}px",
             "--overlay-title-size": f"{self.title_size_px}px",
             "--overlay-artist-size": f"{self.artist_size_px}px",
-            "--overlay-time-size": f"{self.time_size_px}px",
-            "--overlay-progress-track-bg": self.progress_track_bg,
-            "--overlay-progress-height": f"{self.progress_height_px}px",
             "--overlay-accent-start": self.accent_start,
             "--overlay-accent-end": self.accent_end,
         }
@@ -100,7 +112,7 @@ class OverlayConfig:
     server_host: str
     server_port: int
     refresh_seconds: int
-    show_progress: bool
+    expand_width: bool
     nothing_playing_placeholder: str
     theme: OverlayTheme = field(default_factory=OverlayTheme)
 
@@ -115,7 +127,7 @@ ENV_KEY_ORDER: tuple[str, ...] = (
     "OVERLAY_HOST",
     "OVERLAY_PORT",
     "OVERLAY_REFRESH_SECONDS",
-    "OVERLAY_SHOW_PROGRESS",
+    "OVERLAY_EXPAND_WIDTH",
     "OVERLAY_NOTHING_PLAYING_PLACEHOLDER",
 
     # Theme (optional)
@@ -133,9 +145,6 @@ ENV_KEY_ORDER: tuple[str, ...] = (
     "OVERLAY_THEME_COVER_RADIUS_PX",
     "OVERLAY_THEME_TITLE_SIZE_PX",
     "OVERLAY_THEME_ARTIST_SIZE_PX",
-    "OVERLAY_THEME_TIME_SIZE_PX",
-    "OVERLAY_THEME_PROGRESS_TRACK_BG",
-    "OVERLAY_THEME_PROGRESS_HEIGHT_PX",
     "OVERLAY_THEME_ACCENT_START",
     "OVERLAY_THEME_ACCENT_END",
 )
@@ -180,7 +189,7 @@ def write_env_file(env_path: Path, values: Dict[str, str]) -> None:
 def load_config(
     env_path: Optional[Path] = None, overrides: Optional[Dict[str, str]] = None
 ) -> OverlayConfig:
-    env_path = env_path or Path(__file__).with_name(".env")
+    env_path = env_path or default_env_path()
     file_values = load_env_file(env_path)
     overrides = overrides or {}
 
@@ -199,7 +208,7 @@ def load_config(
             "(or create a .env file next to this script)."
         )
 
-    show_progress = (pick("OVERLAY_SHOW_PROGRESS", "false") or "false").lower() in (
+    expand_width = (pick("OVERLAY_EXPAND_WIDTH", "false") or "false").lower() in (
         "true",
         "1",
         "yes",
@@ -238,13 +247,6 @@ def load_config(
         artist_size_px=_as_int(
             pick("OVERLAY_THEME_ARTIST_SIZE_PX"), OverlayTheme().artist_size_px
         ),
-        time_size_px=_as_int(pick("OVERLAY_THEME_TIME_SIZE_PX"), OverlayTheme().time_size_px),
-        progress_track_bg=_clean_css_value(
-            pick("OVERLAY_THEME_PROGRESS_TRACK_BG"), OverlayTheme().progress_track_bg
-        ),
-        progress_height_px=_as_int(
-            pick("OVERLAY_THEME_PROGRESS_HEIGHT_PX"), OverlayTheme().progress_height_px
-        ),
         accent_start=_clean_css_value(pick("OVERLAY_THEME_ACCENT_START"), OverlayTheme().accent_start),
         accent_end=_clean_css_value(pick("OVERLAY_THEME_ACCENT_END"), OverlayTheme().accent_end),
     )
@@ -259,7 +261,7 @@ def load_config(
         server_host=pick("OVERLAY_HOST", "127.0.0.1"),
         server_port=int(pick("OVERLAY_PORT", "8080")),
         refresh_seconds=int(pick("OVERLAY_REFRESH_SECONDS", "1")),
-        show_progress=show_progress,
+        expand_width=expand_width,
         nothing_playing_placeholder=nothing_playing_placeholder,
         theme=theme,
     )

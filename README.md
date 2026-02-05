@@ -30,7 +30,6 @@ add it to OBS as a Browser source.
    OVERLAY_HOST=127.0.0.1
    OVERLAY_PORT=8080
    OVERLAY_REFRESH_SECONDS=1
-   OVERLAY_SHOW_PROGRESS=false
 
    # When nothing is playing: dark | light | off
    OVERLAY_NOTHING_PLAYING_PLACEHOLDER=dark
@@ -103,7 +102,6 @@ End users should still run `python navidrome_obs_overlay.py ...` or the included
 
 - Album cover art
 - Song title and artist
-- Playback progress bar and timer
 
 ## Known Issues:
 

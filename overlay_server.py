@@ -110,7 +110,7 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
 
         html_bytes = render_index(
             self.config.refresh_seconds,
-            self.config.show_progress,
+            self.config.expand_width,
             theme_css_vars=self.config.theme.to_css_vars(),
             nothing_playing_cover_url=placeholder_url or None,
         )
@@ -149,17 +149,28 @@ class NavidromeOverlayHandler(BaseHTTPRequestHandler):
             queue_entry, queue_position = fetch_play_queue_current(self.config)
             now_entries = fetch_now_playing_entries(self.config)
 
-            entry = queue_entry or (now_entries[0] if now_entries else None)
+            # Prefer getNowPlaying for the display entry when available (it tends
+            # to include richer metadata like duration). Use the play queue as a
+            # fallback (especially for paused playback) and as a better position
+            # source when it provides one.
+            entry = (now_entries[0] if now_entries else None) or queue_entry
             elapsed_override = queue_position
+
             is_paused = False
-            if queue_entry:
-                queue_id = str(queue_entry.get("id") or "")
+            if entry and now_entries:
+                # If we have now-playing entries, consider playback paused only
+                # when the play-queue current track is not present in now-playing.
+                if queue_entry:
+                    queue_id = str(queue_entry.get("id") or "")
+                    if queue_id:
+                        is_paused = True
+                        for e in now_entries:
+                            if str(e.get("id") or "") == queue_id:
+                                is_paused = False
+                                break
+            elif entry and queue_entry and not now_entries:
+                # No now-playing entries; if a queue track exists, treat as paused.
                 is_paused = True
-                if queue_id:
-                    for e in now_entries:
-                        if str(e.get("id") or "") == queue_id:
-                            is_paused = False
-                            break
 
             payload = build_now_playing_payload(
                 self.config,

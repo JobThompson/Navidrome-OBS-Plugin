@@ -17,76 +17,17 @@ def _css_vars_block(css_vars: Optional[Dict[str, str]]) -> str:
 
 def render_index(
     refresh_seconds: int,
-    show_progress: bool = True,
+    expand_width: bool = False,
     theme_css_vars: Optional[Dict[str, str]] = None,
     nothing_playing_cover_url: Optional[str] = None,
 ) -> bytes:
-    progress_html = ""
-    if show_progress:
-        progress_html = '''
-      <div class="progress-track" id="progress-track">
-        <div class="progress-fill" id="progress"></div>
-      </div>
-      <div class="time" id="time"></div>'''
-
-    progress_js_vars = ""
-    if show_progress:
-        progress_js_vars = '''
-    const progressEl = document.getElementById("progress");
-    const timeEl = document.getElementById("time");'''
-
-    progress_js_functions = ""
-    if show_progress:
-        progress_js_functions = '''
-    function formatTime(totalSeconds) {
-      const minutes = Math.floor(totalSeconds / 60);
-      const seconds = Math.floor(totalSeconds % 60).toString().padStart(2, "0");
-      return `${minutes}:${seconds}`;
-    }
-
-    function updateProgress() {
-      if (!currentPayload || !currentPayload.isPlaying) {
-        return;
-      }
-      const now = Date.now() / 1000;
-      const duration = currentPayload.durationSeconds || 0;
-      const baseElapsed = currentPayload.elapsedSeconds || 0;
-      let elapsed = baseElapsed;
-      if (!currentPayload.isPaused) {
-        // If the overlay/tab was throttled/suspended (OBS, background, system sleep),
-        // the payload can become very stale. Avoid jumping the progress to 100% and
-        // trigger a refresh to recover quickly.
-        const driftSeconds = now - (currentPayload.serverTime || 0);
-        const maxDriftSeconds = Math.max(2, (refreshMs / 1000) * 2);
-        if (driftSeconds > maxDriftSeconds) {
-          // Fire-and-forget; refreshNowPlaying is defined below.
-          refreshNowPlaying();
-        }
-        const safeDriftSeconds = Math.min(Math.max(driftSeconds, 0), maxDriftSeconds);
-        elapsed = Math.min(duration, baseElapsed + safeDriftSeconds);
-      }
-      const percent = duration > 0 ? (elapsed / duration) * 100 : 0;
-      progressEl.style.width = `${percent}%`;
-      timeEl.textContent = duration ? `${formatTime(elapsed)} / ${formatTime(duration)}` : "";
-    }'''
-
-    progress_update_call = ""
-    if show_progress:
-        progress_update_call = '''
-      updateProgress();'''
-
-    progress_interval = ""
-    if show_progress:
-        progress_interval = '''
-    setInterval(updateProgress, 500);'''
-
-    progress_reset = ""
-    if show_progress:
-        progress_reset = '''
-        progressEl.style.width = "0%";
-        timeEl.textContent = "";'''
-
     theme_vars = _css_vars_block(theme_css_vars)
+
+    card_width_rule = ""
+    if expand_width:
+        card_width_rule = "width: fit-content; min-width: var(--overlay-card-min-width); max-width: calc(100vw - 24px);"
+    else:
+        card_width_rule = "width: var(--overlay-card-min-width); min-width: var(--overlay-card-min-width); max-width: var(--overlay-card-min-width);"
 
     placeholder_cover = (nothing_playing_cover_url or "").replace("\r", "").replace("\n", "")
 
@@ -113,9 +54,6 @@ def render_index(
       --overlay-cover-radius: 12px;
       --overlay-title-size: 18px;
       --overlay-artist-size: 14px;
-      --overlay-time-size: 12px;
-      --overlay-progress-track-bg: rgba(255, 255, 255, 0.2);
-      --overlay-progress-height: 6px;
       --overlay-accent-start: #60a5fa;
       --overlay-accent-end: #34d399;
 {theme_vars}
@@ -133,8 +71,8 @@ def render_index(
       padding: var(--overlay-card-padding-y) var(--overlay-card-padding-x);
       background: var(--overlay-card-bg);
       border-radius: var(--overlay-card-radius);
-      width: fit-content;
-      min-width: var(--overlay-card-min-width);
+      box-sizing: border-box;
+      {card_width_rule}
       box-shadow: var(--overlay-card-shadow);
     }}
     .cover {{
@@ -157,38 +95,23 @@ def render_index(
     .info {{
       display: flex;
       flex-direction: column;
-      min-width: 180px;
+      flex: 1 1 auto;
+      min-width: 0;
     }}
     .title {{
       font-size: var(--overlay-title-size);
       font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }}
     .artist {{
       font-size: var(--overlay-artist-size);
       opacity: var(--overlay-muted-opacity);
       margin-top: 8px;
-    }}
-    .progress-track {{
-      position: relative;
-      height: var(--overlay-progress-height);
-      border-radius: 999px;
-      background: var(--overlay-progress-track-bg);
-      margin-top: 12px;
+      white-space: nowrap;
       overflow: hidden;
-    }}
-    .progress-fill {{
-      position: absolute;
-      height: 100%;
-      left: 0;
-      top: 0;
-      background: linear-gradient(90deg, var(--overlay-accent-start), var(--overlay-accent-end));
-      width: 0%;
-      transition: width 0.4s ease;
-    }}
-    .time {{
-      font-size: var(--overlay-time-size);
-      margin-top: 8px;
-      opacity: 0.75;
+      text-overflow: ellipsis;
     }}
   </style>
 </head>
@@ -197,7 +120,7 @@ def render_index(
     <img class="cover" id="cover" alt="Cover art" />
     <div class="info">
       <div class="title" id="title">Loading…</div>
-      <div class="artist" id="artist"></div>{progress_html}
+      <div class="artist" id="artist"></div>
     </div>
   </div>
 
@@ -206,8 +129,8 @@ def render_index(
     let nothingPlayingCoverUrl = {placeholder_cover!r};
     const titleEl = document.getElementById("title");
     const artistEl = document.getElementById("artist");
-    const coverEl = document.getElementById("cover");{progress_js_vars}
-    let currentPayload = null;{progress_js_functions}
+    const coverEl = document.getElementById("cover");
+    let currentPayload = null;
 
     let lastCoverUrl = null;
 
@@ -235,13 +158,13 @@ def render_index(
       if (!payload.isPlaying) {{
         titleEl.textContent = "Nothing playing";
         artistEl.textContent = "";
-        applyNothingPlayingCover();{progress_reset}
+        applyNothingPlayingCover();
         return;
       }}
 
       titleEl.textContent = payload.title;
       artistEl.textContent = payload.artist || "";
-      applyCoverUrl(payload.coverUrl || "");{progress_update_call}
+      applyCoverUrl(payload.coverUrl || "");
     }}
 
     let refreshInFlight = false;
@@ -306,7 +229,7 @@ def render_index(
         }}
         titleEl.textContent = "Unable to reach Navidrome";
         artistEl.textContent = "";
-        applyNothingPlayingCover();{progress_reset}
+        applyNothingPlayingCover();
       }} finally {{
         refreshInFlight = false;
         refreshStartedAtMs = 0;
@@ -322,7 +245,7 @@ def render_index(
       }}
     }});
     window.addEventListener("focus", () => refreshNowPlaying());
-    window.addEventListener("pageshow", () => refreshNowPlaying());{progress_interval}
+    window.addEventListener("pageshow", () => refreshNowPlaying());
   </script>
 </body>
 </html>

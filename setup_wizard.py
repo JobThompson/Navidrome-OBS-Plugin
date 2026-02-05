@@ -96,8 +96,10 @@ def run_cli_setup(env_path: Path) -> None:
     refresh = prompt_int(
         "Refresh interval (seconds)", int(existing.get("OVERLAY_REFRESH_SECONDS", "1") or "1"), 1, 60
     )
-    show_progress = prompt_bool(
-        "Show progress bar + time", parse_bool(existing.get("OVERLAY_SHOW_PROGRESS", "false"))
+
+    expand_width = prompt_bool(
+        "Allow overlay to expand wider than Min width",
+        parse_bool(existing.get("OVERLAY_EXPAND_WIDTH", "false")),
     )
 
     placeholder_default = (existing.get("OVERLAY_NOTHING_PLAYING_PLACEHOLDER", "dark") or "dark").strip().lower()
@@ -122,7 +124,7 @@ def run_cli_setup(env_path: Path) -> None:
         "OVERLAY_HOST": host,
         "OVERLAY_PORT": str(port),
         "OVERLAY_REFRESH_SECONDS": str(refresh),
-        "OVERLAY_SHOW_PROGRESS": "true" if show_progress else "false",
+        "OVERLAY_EXPAND_WIDTH": "true" if expand_width else "false",
         "OVERLAY_NOTHING_PLAYING_PLACEHOLDER": placeholder_choice,
     }
 
@@ -180,7 +182,7 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
     host_var = tk.StringVar(value=existing.get("OVERLAY_HOST", "127.0.0.1"))
     port_var = tk.StringVar(value=existing.get("OVERLAY_PORT", "8080"))
     refresh_var = tk.StringVar(value=existing.get("OVERLAY_REFRESH_SECONDS", "1"))
-    progress_var = tk.BooleanVar(value=parse_bool(existing.get("OVERLAY_SHOW_PROGRESS", "false")))
+    expand_width_var = tk.BooleanVar(value=parse_bool(existing.get("OVERLAY_EXPAND_WIDTH", "false")))
 
     placeholder_value_var = tk.StringVar(
         value=(existing.get("OVERLAY_NOTHING_PLAYING_PLACEHOLDER", "dark") or "dark").strip().lower()
@@ -724,6 +726,7 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         refresh_var,
         placeholder_value_var,
         placeholder_label_var,
+        expand_width_var,
         theme_font_var,
         theme_font_preset_var,
         theme_text_color_var,
@@ -737,8 +740,6 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         theme_artist_size_var,
     ):
         var.trace_add("write", clear_status)
-
-    progress_var.trace_add("write", clear_status)
 
     def _parse_int(raw: str, default: int) -> int:
         try:
@@ -946,8 +947,6 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         font_family = _first_font_family(css_font)
         text_color_hex = _css_color_to_tk(theme_text_color_var.get(), "#f4f4f5")
         card_bg_raw = theme_card_bg_var.get() or "rgba(10, 10, 10, 0.75)"
-        accent_start_raw = theme_accent_start_var.get() or "#60a5fa"
-        accent_end_raw = theme_accent_end_var.get() or "#34d399"
 
         card_radius = _parse_int(theme_card_radius_var.get(), 14)
         card_gap = _parse_int(existing.get("OVERLAY_THEME_CARD_GAP_PX", "16"), 16)
@@ -958,10 +957,7 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         min_width = _parse_int(theme_min_width_var.get(), 320)
         title_size = _parse_int(theme_title_size_var.get(), 18)
         artist_size = _parse_int(theme_artist_size_var.get(), 14)
-        time_size = _parse_int(existing.get("OVERLAY_THEME_TIME_SIZE_PX", "12"), 12)
         muted_opacity = float(existing.get("OVERLAY_THEME_MUTED_OPACITY", "0.8") or "0.8")
-        progress_height = _parse_int(existing.get("OVERLAY_THEME_PROGRESS_HEIGHT_PX", "6"), 6)
-        progress_track_bg_raw = existing.get("OVERLAY_THEME_PROGRESS_TRACK_BG", "rgba(255, 255, 255, 0.2)")
 
         # Tk can't do true alpha like CSS; approximate by dropping alpha and blending against a dark "preview background".
         preview_bg_rgb = _hex_to_rgb("#0b0b0b") or (11, 11, 11)
@@ -1001,26 +997,13 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         text_rgb = _hex_to_rgb(_css_color_to_tk(text_color_hex, "#f4f4f5")) or (244, 244, 245)
         artist_rgb = _blend(card_bg_rgb, text_rgb, muted_opacity)
 
-        accent_start_rgb = _rgba_to_rgb_approx(accent_start_raw, (96, 165, 250))
-        accent_end_rgb = _rgba_to_rgb_approx(accent_end_raw, (52, 211, 153))
-        track_rgb = _rgba_to_rgb_approx(progress_track_bg_raw, (255, 255, 255))
-        track_hex = _rgb_to_hex(track_rgb)
-
-        show_progress_preview = bool(progress_var.get())
-
         # Layout (mirrors overlay CSS)
         margin = 10
         info_min_w = 180
         card_w = max(min_width, pad_x * 2 + cover_size + card_gap + info_min_w)
-        info_w = max(info_min_w, card_w - (pad_x * 2 + cover_size + card_gap))
 
         title_artist_gap = 8
         content_h = max(cover_size, title_size + title_artist_gap + artist_size)
-        if show_progress_preview:
-            content_h = max(
-                content_h,
-                title_size + title_artist_gap + artist_size + 12 + progress_height + 8 + time_size,
-            )
         card_h = pad_y * 2 + content_h
 
         # Expand canvas height to fit card
@@ -1082,47 +1065,18 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         try:
             title_font = tkfont.Font(family=font_family, size=title_size, weight="bold")
             artist_font = tkfont.Font(family=font_family, size=artist_size)
-            time_font = tkfont.Font(family=font_family, size=time_size)
         except Exception:  # pylint: disable=broad-except
             title_font = (FONT, title_size, "bold")
             artist_font = (FONT, artist_size)
-            time_font = (FONT, time_size)
 
         preview_canvas.create_text(text_x, title_y, anchor="nw", text=title_text, fill=_rgb_to_hex(text_rgb), font=title_font)
         if artist_text:
             preview_canvas.create_text(text_x, artist_y, anchor="nw", text=artist_text, fill=_rgb_to_hex(artist_rgb), font=artist_font)
 
-        if show_progress_preview:
-            track_y = artist_y + artist_size + 12
-            track_x1 = text_x
-            track_x2 = text_x + info_w
-            track_y1 = track_y
-            track_y2 = track_y + progress_height
-            _create_round_rect(int(track_x1), int(track_y1), int(track_x2), int(track_y2), 999, fill=track_hex)
-
-            # Gradient fill (approx)
-            fill_w = int(info_w * 0.65)
-            steps = 28
-            for i in range(steps):
-                t = i / max(1, steps - 1)
-                c = _blend(accent_start_rgb, accent_end_rgb, t)
-                seg_x1 = int(track_x1 + (fill_w * i) / steps)
-                seg_x2 = int(track_x1 + (fill_w * (i + 1)) / steps)
-                preview_canvas.create_rectangle(seg_x1, int(track_y1), seg_x2, int(track_y2), outline="", fill=_rgb_to_hex(c))
-
-            time_y = track_y2 + 8
-            preview_canvas.create_text(
-                text_x,
-                time_y,
-                anchor="nw",
-                text="1:27 / 4:05",
-                fill=_rgb_to_hex(_blend(card_bg_rgb, text_rgb, 0.75)),
-                font=time_font,
-            )
-
     for var in (
         preview_state_var,
         placeholder_value_var,
+        expand_width_var,
         theme_font_var,
         theme_text_color_var,
         theme_card_bg_var,
@@ -1135,8 +1089,7 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         theme_artist_size_var,
     ):
         var.trace_add("write", _schedule_preview_redraw)
-
-    progress_var.trace_add("write", _schedule_preview_redraw)
+    expand_width_var.trace_add("write", _schedule_preview_redraw)
     preview_canvas.bind("<Configure>", _schedule_preview_redraw)
     _schedule_preview_redraw()
 
@@ -1215,10 +1168,10 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         options=list(PLACEHOLDER_OPTIONS.keys()),
     )
 
-    progress_checkbox = tk.Checkbutton(
+    expand_width_checkbox = tk.Checkbutton(
         overlay_body,
-        text="Show progress bar + time",
-        variable=progress_var,
+        text="Allow overlay to expand wider to fit long titles/artists",
+        variable=expand_width_var,
         bg=SURFACE,
         fg=TEXT,
         activebackground=SURFACE,
@@ -1227,7 +1180,7 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
         font=(FONT, 10),
         cursor="hand2",
     )
-    progress_checkbox.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 0))
+    expand_width_checkbox.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 0))
 
     def on_font_preset_change(*_args: object) -> None:
         label = theme_font_preset_var.get()
@@ -1346,7 +1299,7 @@ def run_gui_setup(env_path: Path) -> Optional[bool]:
             "OVERLAY_HOST": host_var.get().strip() or "127.0.0.1",
             "OVERLAY_PORT": str(port_i),
             "OVERLAY_REFRESH_SECONDS": str(refresh_i),
-            "OVERLAY_SHOW_PROGRESS": "true" if progress_var.get() else "false",
+            "OVERLAY_EXPAND_WIDTH": "true" if expand_width_var.get() else "false",
             "OVERLAY_NOTHING_PLAYING_PLACEHOLDER": placeholder_value_var.get().strip().lower() or "dark",
         }
 

@@ -5,7 +5,7 @@ echo Navidrome OBS Overlay - Start
 echo.
 echo If this is your first time, run "Setup Overlay (GUI).bat" first.
 echo.
-py -3 navidrome_obs_overlay.py --open
+py -3 navidrome_obs_overlay.py
 if errorlevel 1 (
   echo.
   echo The overlay failed to start.
